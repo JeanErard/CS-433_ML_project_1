@@ -2,9 +2,9 @@ import csv
 import numpy as np
 import os
 import matplotlib.pyplot as plt
-import numpy.ma as ma
 
-def load_data(path, header=False, intercept=False) :
+def load_data(path, header=False) :
+    """load data from a csv file and store in a numpy.array"""
     path_data = path
     data = np.genfromtxt(path_data, delimiter=',', skip_header=1)
     output = np.delete(data,  [0], axis=1)
@@ -12,13 +12,16 @@ def load_data(path, header=False, intercept=False) :
     if header :
         features = np.genfromtxt(path_data, dtype=str, delimiter=',', max_rows=1)
         features = np.delete(features, [0])
-    final_feat = None
-    if intercept :
-        output = np.c_[np.ones(output.shape[0]), output]
-        final_feat = np.insert(features, 0, 'intercept')
-    return output, final_feat
+    return output, features
+
+def add_intercept(x, header = None):
+    tx = np.c_[np.ones(x.shape[0]), x]
+    if header is not None :
+        header = np.insert(header, 0, 'intercept')
+    return tx, header
 
 def plot_features(data, features) :
+    """plot separately all features of a data matrix"""
     size = len(features)
     num_col = 6
     num_row = int(np.ceil(size/num_col))
@@ -74,6 +77,7 @@ def split_data(x, y, ratio, seed=1):
     return x_tr, x_te, y_tr, y_te
 
 def normalize(x) :
+    """normalize the data matrix (mean = 0 and std = 1)"""
     mean = np.nanmean(x, axis=0)
     std = np.nanstd(x, axis=0)
     norm_x = (x-mean) / std
@@ -81,6 +85,7 @@ def normalize(x) :
 
 
 def remove_col_full_nan(x, header, threshold = 1) :
+    """remove columns from data matrix that are almost entirely composed of nan values (determined by threshold value)"""
     find_nan = np.isnan(x)
     count_nan = np.count_nonzero(find_nan, axis = 0)
     col_del = np.where((count_nan / x.shape[0]) >= threshold)
@@ -89,6 +94,7 @@ def remove_col_full_nan(x, header, threshold = 1) :
     return out_x, out_header, col_del
     
 def const_column(x, header, threshold=1) :
+    """remove columns from data matrix that are almost constant (determined by threshold value)"""
     col_to_delete = []
     for col in range(x.shape[1]) :
         column = x[:,col]
@@ -99,16 +105,9 @@ def const_column(x, header, threshold=1) :
     out_x = np.delete(x, col_to_delete, axis =1)
     out_header = np.delete(header, col_to_delete)
     return out_x, out_header, col_to_delete
-
-"""def correlation(x, header, threshold=1) :
-    corr = ma.corrcoef(ma.masked_invalid(x), rowvar=False)
-    corr = ma.asarray(corr).copy()
-    corr = np.triu(corr, k=1)
-    print(corr)
-    corr_feature = np.where(ma.filled(corr >= threshold, False))
-    print(corr_feature)"""
     
 def pairwise_corr(x, header, threshold=1):
+    """remove columns of the data matrix that are highly correlated (determined by threshold value), by computing the pairwise correlation"""
     n_features = x.shape[1]
     col_rem = []
     
@@ -128,6 +127,7 @@ def pairwise_corr(x, header, threshold=1):
     return out_x, out_header, col_rem
 
 def replace_nan(x, type='zero') :
+    """replace nan value of a matrix by the mean or 0 (determine by type value)"""
     out = np.zeros(np.shape(x))
     if type == 'zero' :
         out = np.where(np.isnan(x), 0, x)
@@ -196,6 +196,21 @@ def ridge_regression(y, x, lambda_):
     mse = compute_loss_mse(y, x, w)
     return w, mse[0]
 
+def compute_gradient(y, x, w):
+    """Computes the gradient at w.
+
+    Args:
+        y: shape=(N, )
+        tx: shape=(N,2)
+        w: shape=(2, ). The vector of model parameters.
+
+    Returns:
+        An array of shape (2, ) (same shape as w), containing the gradient of the loss at w.
+    """
+    error = y - x.dot(w)
+    grad_loss = ((-1) / len(y)) * x.T.dot(error)
+    return grad_loss
+
 def mean_squared_error_gd(y, x, initial_w, max_iters, gamma):
     """The Gradient Descent (GD) algorithm.
 
@@ -211,11 +226,10 @@ def mean_squared_error_gd(y, x, initial_w, max_iters, gamma):
         ws: a list of length max_iters + 1 containing the model parameters as numpy arrays of shape (2, ),
             for each iteration of GD (as well as the final weights)
     """
-    w = initial_w
+    w = initial_w.copy()
     for n_iter in range(max_iters):
         #Compute the gradient
-        error = y - x.dot(w)
-        gradient_loss = ((-1) / len(y)) * x.T.dot(error)
+        gradient_loss = compute_gradient(y, x, w)
         #update w by gradient
         w = w - gamma*gradient_loss
 
@@ -237,16 +251,18 @@ def mean_squared_error_sgd(y, x, initial_w, max_iters, gamma):
         losses: a list of length max_iters containing the loss value (scalar) for each iteration of SGD
         ws: a list of length max_iters containing the model parameters as numpy arrays of shape (2, ), for each iteration of SGD
     """
-    w = initial_w
+    seed = 12
+    w = initial_w.copy()
 
     for n_iter in range(max_iters):
-        for i in range(y.shape[0]):
-            point_x = x[i,:]
-            point_y = y[i]
-            gradient_loss = ((-1) / len(y)) * point_x.T.dot(point_y - point_x.dot(w)) 
+        np.random.seed(seed)
+        i = np.random.choice(len(y))
+        point_x = x[i,:]
+        point_y = y[i]
+        gradient_loss = compute_gradient(point_y, point_x, w)
 
-            #update w
-            w = w - gamma*gradient_loss
+        #update w
+        w = w - gamma*gradient_loss
         
     mse = compute_loss_mse(y, x, w)
     return w, mse
@@ -284,13 +300,9 @@ def cross_validation_one_iteration(y, x, k_indices, k, lambda_):
         k_indices:  2D array returned by build_k_indices()
         k:          scalar, the k-th fold (N.B.: not to confused with k_fold which is the fold nums)
         lambda_:    scalar, cf. ridge_regression()
-        degree:     scalar, cf. build_poly()
 
     Returns:
         train and test root mean square errors rmse = sqrt(2 mse)
-
-    >>> cross_validation(np.array([1.,2.,3.,4.]), np.array([6.,7.,8.,9.]), np.array([[3,2], [0,1]]), 1, 2, 3)
-    (0.019866645527596753, 0.33555914361295197)
     """
     test_index = k_indices[k]
     x_test = x[test_index]
@@ -346,44 +358,65 @@ def cross_validation(y, x, k_fold, lambdas):
 
     return best_lambda, best_rmse
 
-def plot_lambda(loss_tr, loss_te, param) :
+def plot_lambda(loss_tr, loss_te, param, param_name) :
+    """plot the evolution of the test loss and the train loss depending of the parameter value"""
+    plt.figure()
     plt.semilogx(param, loss_tr, marker=".", color="b", label="train error")
     plt.semilogx(param, loss_te, marker=".", color="r", label="test error")
-    plt.xlabel("lambda")
-    plt.ylabel("r mse")
+    plt.xlabel(param_name)
+    plt.ylabel("rmse")
     # plt.xlim(1e-4, 1)
     plt.title("cross validation")
     plt.legend(loc=2)
     plt.grid(True)
-    plt.savefig("cross_validation")
     
 ## classification
-
-def compute_logistic_loss(y, x, w):
+def compute_logistic_loss(y, x, w, weighted=None):
+    """compute the logistic loss (for y in {-1, 1})"""
     y = y.squeeze()
     y_pred = x @ w
-    log_loss = np.mean(np.logaddexp(0, -y * y_pred)) #log(1 + exp(-y y_pred))
-    return log_loss
+    loss = np.logaddexp(0, -y * y_pred) #log(1 + exp(-y y_pred))
+    return np.mean(loss if weighted is None else weighted*loss)
 
-def gd_logistic_loss_pen(y, x, initial_w, max_iters, gamma, lambda_) :
+def sigma_function(t) :
+    """compute the sigma function"""
+    return 1/(1 + np.exp(-t))
+
+def gradient_log(y, x, w, lambda_=0, weighted = None) :
+    """compute the gradient of the neg log likelihood of logistic regression"""
+    weighted = np.ones(N) if weighted is None else weighted
+    if x.ndim == 1 :
+        N = 1
+    else :
+        N, _ = x.shape
+    r = weighted * y * sigma_function(-y * (x@w))
+    grad = -(x.T @ r) / N + 2*lambda_*w
+    return grad
+
+def sgd_logistic_loss_pen(y, x, initial_w, max_iters, gamma, lambda_) :
+    """compute stochastic gradient descent with the logistic loss and a penalization term"""
+    seed = 12
     y = y.squeeze()
     w = initial_w.copy()
     
     for n_iter in range(max_iters):
-        for i in range(y.shape[0]):
-            point_x, point_y = x[i,:], y[i]
-            # grad = -y * x * sigma(-y x.w)
-            gradient_loss = -point_y * point_x * sigma_function(-point_y * (point_x@w)) + 2 * lambda_ * w
-    
-            #update w
-            w = w - gamma*gradient_loss
+        np.random.seed(seed)
+        i = np.random.choice(len(y))
+        point_x, point_y = x[i,:], y[i]
+            
+        gradient_loss = gradient_log(point_y, point_x, w, lambda_)    
+        
+        #update w
+        w = w - gamma*gradient_loss
             
     return w, compute_logistic_loss(y, x, w)
     
 def accuracy(y, y_pred):
+    """compute the accuracy of the prediction"""
     return np.mean(y == y_pred)
 
 def threshold_prediction(y_pred, threshold=0) :
+    """reevaluate the preidction base on the threshold value (smaller -> y_pred == -1, bigger -> y_pred == 1)"""
     return np.where(y_pred >= threshold, 1, -1)
 
 def cross_validation_log(y, x, k_fold, lambdas, gammas):
@@ -441,7 +474,6 @@ def cross_validation_one_iteration_log(y, x, k_indices, k, lambda_, gamma):
         k_indices:  2D array returned by build_k_indices()
         k:          scalar, the k-th fold (N.B.: not to confused with k_fold which is the fold nums)
         lambda_:    scalar, cf. ridge_regression()
-        degree:     scalar, cf. build_poly()
 
     Returns:
         train and test root mean square errors rmse = sqrt(2 mse)
@@ -456,10 +488,10 @@ def cross_validation_one_iteration_log(y, x, k_indices, k, lambda_, gamma):
     x_train = x[train_index]
     y_train = y[train_index]
 
-    w, loss = gd_logistic_loss_pen(y_train, x_train,  np.zeros(x_train.shape[1]), 30, gamma, lambda_)
+    w, loss = sgd_logistic_loss_pen(y_train, x_train,  np.zeros(x_train.shape[1]), 30, gamma, lambda_)
     
-    loss_tr = np.sqrt(2*loss)
-    loss_te = np.sqrt(2*compute_logistic_loss(y_test, x_test, w))
+    loss_tr = loss
+    loss_te = compute_logistic_loss(y_test, x_test, w)
     return loss_tr, loss_te
 
 def create_csv_submission(ids, y_pred, name):
@@ -484,35 +516,31 @@ def create_csv_submission(ids, y_pred, name):
         for r1, r2 in zip(ids, y_pred):
             writer.writerow({"Id": int(r1), "Prediction": int(r2)})
             
-def sigma_function(t) :
-    return 1/(1 + np.exp(-t))
-
-def hessian_log(y, x, w, lambda_=0) :
+def hessian_log(y, x, w, lambda_=0, weighted = None) :
+    """compute the hessian of the neg log likelihood of the logistic regression"""
+    weighted = np.ones(N) if weighted is None else weighted
     N, D = x.shape
     s = sigma_function(x@w)
-    p = s * (1 - s)
+    p = weighted * s * (1 - s)
     H = (x.T @ (x * p[:,None])) / N + 2 * lambda_ * np.eye(D) #p[:,None] transform shape (N,) to (N,1) equivalent to np.newaxis
     return H
 
-def gradient_log(y, x, w, lambda_=0) :
-    N, D = x.shape
-    r = y * sigma_function(-y * (x@w))
-    grad = -(x.T @ r) / N + 2*lambda_*w
-    return grad
-
-def newton_log_pen(y, x, initial_w, max_iters, lambda_) :
+def newton_log_pen(y, x, initial_w, max_iters, lambda_, weighted=None) :
+    """compute the newton methods for logistic regression"""
     y = y.squeeze()
     N, D = x.shape
+    weighted = np.ones(N) if weighted is None else weighted
     w = initial_w.copy()
     
     for _ in range(max_iters) :
-        grad = gradient_log(y, x, w, lambda_)
-        H = hessian_log(y, x, w, lambda_)
+        grad = gradient_log(y, x, w, lambda_, weighted)
+        H = hessian_log(y, x, w, lambda_, weighted)
         w = w - np.linalg.solve(H, grad)
         
     return w, compute_logistic_loss(y, x, w)
 
-def cross_val_new(y, x, k_fold, lambdas) :
+def cross_val_new(y, x, k_fold, lambdas, weighted=False) :
+    """cross validation of the newton method to find the best penalizing parameter value"""
     seed = 12
     k_fold = k_fold
     lambdas = lambdas
@@ -524,26 +552,81 @@ def cross_val_new(y, x, k_fold, lambdas) :
     for lambda_ in lambdas :
         loss_k = []
         for k in range(k_fold) :
-            _, loss_te = cross_val_one_log(y, x, k_indices, k, lambda_)
+            _, loss_te = cross_val_one_log(y, x, k_indices, k, lambda_, weighted)
             loss_k.append(loss_te)
         log_loss_te.append(np.mean(loss_k))
     
     best_loss = np.min(log_loss_te)
     index = np.argmin(log_loss_te)
     best_lambda = lambdas[index]
-    plot_lambda(np.zeros(len(lambdas)),log_loss_te, lambdas)
+    plot_lambda(np.zeros(len(lambdas)),log_loss_te, lambdas, "lambda")
     
     return best_lambda, best_loss
 
-def cross_val_one_log(y, x, k_indices, k, lambda_) :
+def cross_val_one_log(y, x, k_indices, k, lambda_, weighted=False) :
+    """compute the cross validation of the newton method for one only k"""
     test_index = k_indices[k]
     x_test = x[test_index]
     y_test = y[test_index]
     train_index =  np.delete(k_indices, k, axis=0).ravel()
     x_train = x[train_index]
     y_train = y[train_index]
+    if weighted :
+        weight = ponderate_vector(y_train)
+    else :
+        weight = None
 
-    w, _ = newton_log_pen(y_train, x_train,  np.zeros(x_train.shape[1]), 10, lambda_)
+    w, _ = newton_log_pen(y_train, x_train,  np.zeros(x_train.shape[1]), 10, lambda_, weight)
     
     loss_te = compute_logistic_loss(y_test, x_test, w)
     return _, loss_te
+
+def ponderate_vector(y) :
+    """create a vector of ponderate weight to balance the underpresence of 1 value in the label"""
+    y_ = y.squeeze()
+    N, n_pos = len(y_), np.sum(y_ == 1)
+    a = np.where(y_ == 1, N / (2 * n_pos), N / (2 * (N - n_pos))) 
+    return a
+
+def f1_score(y, y_pred) :
+    y, y_pred = y.squeeze(), y_pred.squeeze()
+    tp = np.sum((y_pred == 1) & (y == 1))
+    fp = np.sum((y_pred == 1) & (y == -1))
+    fn = np.sum((y_pred == -1) & (y == 1))
+    return 0.0 if tp == 0 else 2 * tp / (2 * tp + fp + fn)
+
+def cross_validation_threshold(y, x, k_fold, lambda_, thresholds, max_iters=10, weighted=False) :
+    """cross validation of the threshold for the prediction of the value -1 or 1"""
+    seed = 12
+    k_fold = k_fold
+    lambda_ = lambda_
+    y = y.squeeze()
+    
+    # split data in k fold
+    k_indices = build_k_indices(y, k_fold, seed)
+    
+    # define lists to store the loss of training data and test data
+    f1 = np.zeros((k_fold, len(thresholds)))
+    
+    for k in range(k_fold) :
+        ind_te = k_indices[k]
+        ind_tr = np.delete(k_indices, k, axis=0).ravel()
+        weight = None
+        if weighted :
+            weight = ponderate_vector(y[ind_tr])
+        w, _ = newton_log_pen(y[ind_tr], x[ind_tr], np.zeros(x.shape[1]), max_iters, lambda_, weight)
+        for i,t in enumerate(thresholds) :
+            y_pred = x[ind_te] @ w
+            y_pred_class = threshold_prediction(y_pred, t).squeeze()
+            f1[k,i] = f1_score(y[ind_te], y_pred_class)
+    
+    f1_mean = f1.mean(axis=0)
+    best = np.argmax(f1_mean)
+    plot_lambda(f1_mean, np.zeros(len(thresholds)), thresholds, 'threshold')
+    return thresholds[best], f1_mean[best]
+
+def get_ind_for_sub(path) :
+    """load data from a csv file and store in a numpy.array"""
+    path_data = path
+    data = np.genfromtxt(path_data, delimiter=',', skip_header=1)
+    return data[:,0]
