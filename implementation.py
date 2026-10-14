@@ -76,11 +76,16 @@ def split_data(x, y, ratio, seed=1):
     
     return x_tr, x_te, y_tr, y_te
 
-def normalize(x) :
+def normalize(x, index_cont = None, norm_cont = False) :
     """normalize the data matrix (mean = 0 and std = 1)"""
-    mean = np.nanmean(x, axis=0)
-    std = np.nanstd(x, axis=0)
-    norm_x = (x-mean) / std
+    x_int = x.copy() if index_cont is None else x[:,index_cont]
+    mean = np.nanmean(x_int, axis=0)
+    std = np.nanstd(x_int, axis=0)
+    if index_cont is None :
+        norm_x = (x_int-mean) / std 
+    else :
+        norm_x = x.copy()
+        norm_x[:, index_cont] = (x_int - mean) / std
     return norm_x, mean, std
 
 
@@ -125,6 +130,19 @@ def pairwise_corr(x, header, threshold=1):
     out_x = np.delete(x, col_rem, axis =1)
     out_header = np.delete(header, col_rem)
     return out_x, out_header, col_rem
+
+def del_correlate(x, header, threshold = 1) :
+    data = x.astype(float)
+    corr = np.abs(np.corrcoef(data.T))
+    del_ind = []
+    
+    for i in range(x.shape[1]) :
+        if i in del_ind :
+            continue
+        for j in range(i+1, x.shape[1]) :
+            if corr[i, j] >= threshold :
+                del_ind.append(j)
+    return np.delete(x, del_ind, axis=1), np.delete(header, del_ind), del_ind
 
 def replace_nan(x, type='zero') :
     """replace nan value of a matrix by the mean or 0 (determine by type value)"""
@@ -630,3 +648,73 @@ def get_ind_for_sub(path) :
     path_data = path
     data = np.genfromtxt(path_data, delimiter=',', skip_header=1)
     return data[:,0]
+
+def one_hot_encoder(x, header, numb_cat = 9, index_for_continous = False) :
+    oh_metadata = {}
+    new_data = None
+    new_header = []
+    cont_index = [] if index_for_continous else None 
+    
+    for i in range(x.shape[1]) :
+        unique_value_raw = np.unique(x[:,i])
+        
+        has_nan = np.any(np.isnan(unique_value_raw.astype(float)))
+        unique_value = unique_value_raw[~np.isnan(unique_value_raw.astype(float))]
+        
+        num_cat = len(unique_value) + (1 if has_nan else 0)
+        is_binary = set(unique_value).issubset({0, 1})
+        
+        if (num_cat <= numb_cat) and not is_binary:
+            oh_metadata[i] = {
+                'categories': unique_value,
+                'has_nan_in_train': has_nan
+            }
+            one_hot, header_one_hot = create_one_hot(x[:,i], unique_value, header[i])
+            if has_nan :
+                nan_ind = np.isnan(x[:,i].astype(float)).astype(int)
+                one_hot = np.column_stack((one_hot, nan_ind))
+                header_one_hot.append(f'{header[i]}_nan')
+                
+            new_data = np.column_stack((new_data, one_hot)) if new_data is not None else one_hot
+            new_header.extend(header_one_hot)
+        
+        else :
+            new_data = np.column_stack((new_data, x[:,i])) if new_data is not None else x[:,i].copy()
+            new_header.append(header[i])
+            print(new_header)
+            if index_for_continous :
+                cont_index.append(len(new_header) - 1)
+                print(cont_index)
+    return new_data, new_header , cont_index, oh_metadata    
+        
+def create_one_hot(col, unique_value, header=None, test = False) :
+    one_hot = None
+    new_header = []
+    for i,unique in enumerate(unique_value[:-1]) :
+        column = np.where(col == unique, 1, 0)
+        
+        one_hot = np.column_stack((one_hot, column)) if one_hot is not None else column
+        if not test :
+            new_header.append(f'{header}_cat{i}') 
+        
+    return one_hot, new_header
+        
+def one_hot_for_test(test, oh_metadata) :
+    new_test = None
+    for i in range(test.shape[1]):
+        if i in oh_metadata:
+            unique_value = oh_metadata[i]['categories']
+            has_nan = oh_metadata[i]['has_nan_in_train']
+            
+            one_hot, _ = create_one_hot(test[:,i], unique_value, test=True)
+            
+            if has_nan:
+                nan_ind = np.isnan(test[:, i].astype(float)).astype(int)
+                one_hot = np.column_stack((one_hot, nan_ind))
+
+            new_test = np.column_stack((new_test, one_hot)) if new_test is not None else one_hot
+        
+        else:                
+            new_test = np.column_stack((new_test, test[:,i])) if new_test is not None else test[:,i]
+
+    return new_test
