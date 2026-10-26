@@ -13,6 +13,9 @@ import numpy as np
 
 from implementations import sigmoid
 
+# Number of rows processed at once when computing the Hessian (memory usage)
+HESSIAN_BLOCK_SIZE = 20000
+
 
 def balanced_class_weights(y):
     """Compute balanced sample weights: N / (2 * N_class) for each sample.
@@ -84,7 +87,12 @@ def weighted_logistic_hessian(tx, w, lambda_=0, weights=None):
     weights = np.ones(n) if weights is None else weights
     s = sigmoid(tx @ w)
     p = weights * s * (1 - s)
-    return (tx.T @ (tx * p[:, None])) / n + 2 * lambda_ * np.eye(d)
+    # Sum over blocks of rows, to avoid a temporary copy of the whole matrix
+    hessian = 2 * lambda_ * np.eye(d)
+    for start in range(0, n, HESSIAN_BLOCK_SIZE):
+        block = slice(start, start + HESSIAN_BLOCK_SIZE)
+        hessian += tx[block].T @ (tx[block] * p[block, None]) / n
+    return hessian
 
 
 def newton_logistic_regression(y, tx, initial_w, max_iters, lambda_, weights=None):

@@ -16,7 +16,7 @@ import time
 
 import numpy as np
 
-from cross_validation import cross_validation_lambda, cross_validation_threshold
+from cross_validation import cross_validation_lambda_threshold
 from helpers import create_csv_submission, load_csv_data, load_feature_names, split_data
 from models import (
     accuracy,
@@ -34,20 +34,25 @@ OUTPUT_PATH = "submission.csv"
 SPLIT_RATIO = 0.6  # fraction of the training set used for the search
 SPLIT_SEED = 42
 K_FOLD = 5
-LAMBDAS = np.logspace(-8, -3, 10)
+LAMBDAS = np.logspace(-4, -2, 5)
 THRESHOLDS = np.arange(-2, 2, 0.1)
 CV_ITERS = 10  # Newton steps during cross-validation
 
+# Number of features combined two by two (interactions), see preprocessing.py
+N_INTERACTIONS = 30
+
 # Hyperparameters found by `python run.py --tune`
-# (cross-validation F1 = 0.423, AIcrowd F1 = 0.438, accuracy = 0.869)
-BEST_LAMBDA = 2.1544346900318867e-05  # = LAMBDAS[6]
-BEST_THRESHOLD = 0.9
+# (cross-validation F1 = 0.425, hold-out F1 = 0.432, accuracy = 0.878)
+BEST_LAMBDA = 1e-3  # = LAMBDAS[2]
+BEST_THRESHOLD = 1.1
 FINAL_ITERS = 15  # Newton steps for the final model
 
 
 def tune_hyperparameters(x, y, feature_names):
     """Choose lambda and the decision threshold by 5-fold cross-validation.
 
+    For each lambda, the threshold maximizing the cross-validation F1 score is
+    found; the pair (lambda, threshold) with the best F1 score is kept.
     The search is done on 60% of the training set; the other 40% is kept as a
     hold-out set to report the F1 score and accuracy of the chosen model.
 
@@ -61,18 +66,19 @@ def tune_hyperparameters(x, y, feature_names):
         best_threshold (float): chosen decision threshold.
     """
     x_tr, x_va, y_tr, y_va = split_data(x, y, SPLIT_RATIO, seed=SPLIT_SEED)
-    preprocessor = Preprocessor()
-    tx_tr = preprocessor.fit_transform(x_tr, feature_names)
+    preprocessor = Preprocessor(n_interactions=N_INTERACTIONS)
+    tx_tr = preprocessor.fit_transform(x_tr, feature_names, y_tr)
     tx_va = preprocessor.transform(x_va)
     del x_tr, x_va
 
-    best_lambda, _ = cross_validation_lambda(y_tr, tx_tr, K_FOLD, LAMBDAS, CV_ITERS)
-    print(f"Best lambda: {best_lambda!r}")
-    best_threshold, f1_cv = cross_validation_threshold(
-        y_tr, tx_tr, K_FOLD, best_lambda, THRESHOLDS, CV_ITERS
+    best_lambda, best_threshold, f1_cv = cross_validation_lambda_threshold(
+        y_tr, tx_tr, K_FOLD, LAMBDAS, THRESHOLDS, CV_ITERS
     )
+    for lambda_, f1 in zip(LAMBDAS, f1_cv.max(axis=1)):
+        print(f"lambda = {lambda_:.2e}: cross-validation F1 = {f1:.4f}")
     print(
-        f"Best threshold: {best_threshold!r} (cross-validation F1 = {f1_cv.max():.4f})"
+        f"Best lambda: {best_lambda!r}, best threshold: {best_threshold!r} "
+        f"(cross-validation F1 = {f1_cv.max():.4f})"
     )
 
     w, _ = newton_logistic_regression(
@@ -112,8 +118,8 @@ def main():
         )
 
     print("Training the final model on the whole training set...")
-    preprocessor = Preprocessor()
-    tx_train = preprocessor.fit_transform(x_train, feature_names)
+    preprocessor = Preprocessor(n_interactions=N_INTERACTIONS)
+    tx_train = preprocessor.fit_transform(x_train, feature_names, y_train)
     tx_test = preprocessor.transform(x_test)
     del x_train, x_test
     print(f"Number of features after preprocessing: {tx_train.shape[1]}")
