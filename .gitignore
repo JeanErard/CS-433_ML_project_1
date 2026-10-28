@@ -1,5 +1,9 @@
 data/
 __pycache__/
-first_submission_newton.csv
-submission_oh_newton.csv
-submission_oh_newton_2.csv
+.ipynb_checkpoints/
+*.csv
+
+# LaTeX build files
+report/*.aux
+report/*.log
+report/*.out
